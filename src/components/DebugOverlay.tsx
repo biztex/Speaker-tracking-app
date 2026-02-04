@@ -60,13 +60,21 @@ const DebugOverlay: React.FC<DebugOverlayProps> = ({
                 <div className="space-y-1">
                   <div className="flex items-center justify-between">
                     <span className="text-[var(--color-text-muted)]">Volume:</span>
-                    <span className="text-[var(--color-text-primary)]">
+                    <span className={`font-medium ${
+                      audioFeatures.volume > 0.02 
+                        ? 'text-green-500' 
+                        : audioFeatures.volume > 0.008 
+                          ? 'text-yellow-500' 
+                          : 'text-[var(--color-text-primary)]'
+                    }`}>
                       {(audioFeatures.volume * 100).toFixed(1)}%
                     </span>
                   </div>
                   <div className="h-2 bg-[var(--color-bg-tertiary)] rounded-full overflow-hidden">
                     <div
-                      className="h-full bg-green-500 transition-all duration-100"
+                      className={`h-full transition-all duration-100 ${
+                        audioFeatures.volume > 0.02 ? 'bg-green-500' : 'bg-yellow-500'
+                      }`}
                       style={{ width: `${Math.min(audioFeatures.volume * 100 * 5, 100)}%` }}
                     />
                   </div>
@@ -76,7 +84,7 @@ const DebugOverlay: React.FC<DebugOverlayProps> = ({
                 <div className="flex items-center justify-between">
                   <span className="text-[var(--color-text-muted)]">Pitch:</span>
                   <span className={`${
-                    audioFeatures.pitch > 60 && audioFeatures.pitch < 400
+                    audioFeatures.pitch > 50 && audioFeatures.pitch < 600
                       ? 'text-green-500'
                       : 'text-[var(--color-text-muted)]'
                   }`}>
@@ -108,9 +116,9 @@ const DebugOverlay: React.FC<DebugOverlayProps> = ({
 
                 {/* Thresholds info */}
                 <div className="text-[var(--color-text-muted)] text-[10px] space-y-1">
-                  <div>Volume threshold: 0.01 (1%)</div>
-                  <div>Pitch range: 60-400 Hz</div>
-                  <div>ZCR range: 0.02-0.3</div>
+                  <div>Volume threshold: 0.8% (or 2% auto-accept)</div>
+                  <div>Pitch range: 50-600 Hz</div>
+                  <div>Spectral min: 100 Hz</div>
                 </div>
               </>
             ) : (

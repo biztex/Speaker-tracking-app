@@ -43,6 +43,7 @@ export function useAudioProcessor(
   const audioContextRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const sourceRef = useRef<MediaStreamAudioSourceNode | null>(null);
+  const gainNodeRef = useRef<GainNode | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const animationFrameRef = useRef<number | null>(null);
   const speakerDetectorRef = useRef<SpeakerDetector>(createSpeakerDetector(maxSpeakers));
@@ -188,10 +189,23 @@ export function useAudioProcessor(
       analyser.maxDecibels = DEFAULT_AUDIO_CONFIG.maxDecibels;
       analyserRef.current = analyser;
 
-      // Connect source to analyzer
+      // Create a zero-gain node to connect to destination
+      // This is CRITICAL: Web Audio nodes only process when connected to destination
+      const gainNode = audioContext.createGain();
+      gainNode.gain.value = 0; // Mute output (no echo/feedback)
+      gainNodeRef.current = gainNode;
+
+      // Connect the audio graph: source -> analyser -> gainNode -> destination
       const source = audioContext.createMediaStreamSource(stream);
       source.connect(analyser);
+      analyser.connect(gainNode);
+      gainNode.connect(audioContext.destination);
       sourceRef.current = source;
+
+      // CRITICAL: Resume AudioContext if suspended (required by browsers)
+      if (audioContext.state === 'suspended') {
+        await audioContext.resume();
+      }
 
       // Don't pre-initialize speakers - they will be added dynamically when detected
       // Clear any existing speakers
@@ -244,6 +258,11 @@ export function useAudioProcessor(
     if (analyserRef.current) {
       analyserRef.current.disconnect();
       analyserRef.current = null;
+    }
+
+    if (gainNodeRef.current) {
+      gainNodeRef.current.disconnect();
+      gainNodeRef.current = null;
     }
 
     if (audioContextRef.current) {

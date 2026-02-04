@@ -164,26 +164,31 @@ export function extractAudioFeatures(
 
 /**
  * Check if the audio features indicate voice activity
- * Simplified detection - primarily volume-based for reliability
+ * SIMPLIFIED: Primarily volume-based for maximum reliability
+ * Speaker differentiation is handled separately by the speaker detection module
  */
 export function detectVoiceActivity(
   features: AudioFeatures,
-  silenceThreshold: number = 0.01 // Lowered threshold for better sensitivity
+  silenceThreshold: number = 0.008 // Very sensitive threshold
 ): boolean {
-  // Primary check: volume above silence threshold
-  const hasVolume = features.volume > silenceThreshold;
+  // Primary detection: ANY sound above threshold is considered potential voice
+  // This ensures we never miss actual speech
+  // False positives are acceptable - speaker detection will filter further
   
-  // If volume is detected, we consider it voice activity
-  // The pitch-based speaker identification will handle the rest
-  // This is more reliable than requiring all conditions
+  const hasSignificantVolume = features.volume > silenceThreshold;
   
-  // Optional secondary checks (for filtering out non-voice sounds)
-  const hasPitch = features.pitch > 50 && features.pitch < 500; // Wider range
-  const hasVoiceZCR = features.zeroCrossingRate > 0.01 && features.zeroCrossingRate < 0.5; // Wider range
+  // For very low volumes, require some voice-like characteristic
+  // For moderate volumes (>2%), just accept it as voice activity
+  if (features.volume > 0.02) {
+    return true;
+  }
   
-  // Voice activity = has volume AND at least one voice characteristic
-  // OR just significant volume (above 0.05) as fallback
-  return hasVolume && (hasPitch || hasVoiceZCR || features.volume > 0.05);
+  // For quieter sounds, do a basic sanity check
+  // Accept if pitch is in human range OR there's meaningful frequency content
+  const hasPitch = features.pitch > 50 && features.pitch < 600;
+  const hasFrequencyContent = features.spectralCentroid > 100;
+  
+  return hasSignificantVolume && (hasPitch || hasFrequencyContent);
 }
 
 /**
