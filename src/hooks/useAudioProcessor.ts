@@ -48,6 +48,9 @@ export function useAudioProcessor(
   const animationFrameRef = useRef<number | null>(null);
   const speakerDetectorRef = useRef<SpeakerDetector>(createSpeakerDetector(maxSpeakers));
   
+  // Ref for running state (avoids stale closure in requestAnimationFrame callback)
+  const isRunningRef = useRef(false);
+
   // Refs for speaker timing
   const lastSpeakerIdRef = useRef<number | null>(null);
   const lastSpeakingTimeRef = useRef<number>(Date.now());
@@ -75,7 +78,7 @@ export function useAudioProcessor(
 
   // Process audio frame
   const processAudioFrame = useCallback(() => {
-    if (!analyserRef.current || !audioContextRef.current || status !== 'running') {
+    if (!analyserRef.current || !audioContextRef.current || !isRunningRef.current) {
       return;
     }
 
@@ -157,7 +160,7 @@ export function useAudioProcessor(
 
     // Continue processing
     animationFrameRef.current = requestAnimationFrame(processAudioFrame);
-  }, [status, maxSpeakers, onSpeakerChange, onVoiceActivity, addSpeaker]);
+  }, [maxSpeakers, onSpeakerChange, onVoiceActivity, addSpeaker]);
 
   // Start audio capture
   const start = useCallback(async () => {
@@ -217,11 +220,14 @@ export function useAudioProcessor(
       lastSpeakerIdRef.current = null;
       lastSpeakingTimeRef.current = Date.now();
 
+      // Set running ref BEFORE scheduling frame so callback sees it immediately
+      isRunningRef.current = true;
       setStatus('running');
 
       // Start processing loop
       animationFrameRef.current = requestAnimationFrame(processAudioFrame);
     } catch (err) {
+      isRunningRef.current = false;
       const errorMessage =
         err instanceof Error ? err.message : 'Failed to access microphone';
       setError(errorMessage);
@@ -231,6 +237,8 @@ export function useAudioProcessor(
 
   // Stop audio capture
   const stop = useCallback(() => {
+    isRunningRef.current = false;
+
     // Stop animation frame
     if (animationFrameRef.current !== null) {
       cancelAnimationFrame(animationFrameRef.current);
