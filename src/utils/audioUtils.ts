@@ -164,21 +164,26 @@ export function extractAudioFeatures(
 
 /**
  * Check if the audio features indicate voice activity
+ * Simplified detection - primarily volume-based for reliability
  */
 export function detectVoiceActivity(
   features: AudioFeatures,
-  silenceThreshold: number = 0.02
+  silenceThreshold: number = 0.01 // Lowered threshold for better sensitivity
 ): boolean {
-  // Voice typically has:
-  // - Volume above silence threshold
-  // - Pitch in human voice range (85-300 Hz for speech fundamentals)
-  // - Moderate zero crossing rate
-  
+  // Primary check: volume above silence threshold
   const hasVolume = features.volume > silenceThreshold;
-  const hasPitch = features.pitch > 60 && features.pitch < 400;
-  const hasVoiceZCR = features.zeroCrossingRate > 0.02 && features.zeroCrossingRate < 0.3;
   
-  return hasVolume && (hasPitch || hasVoiceZCR);
+  // If volume is detected, we consider it voice activity
+  // The pitch-based speaker identification will handle the rest
+  // This is more reliable than requiring all conditions
+  
+  // Optional secondary checks (for filtering out non-voice sounds)
+  const hasPitch = features.pitch > 50 && features.pitch < 500; // Wider range
+  const hasVoiceZCR = features.zeroCrossingRate > 0.01 && features.zeroCrossingRate < 0.5; // Wider range
+  
+  // Voice activity = has volume AND at least one voice characteristic
+  // OR just significant volume (above 0.05) as fallback
+  return hasVolume && (hasPitch || hasVoiceZCR || features.volume > 0.05);
 }
 
 /**

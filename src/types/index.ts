@@ -93,9 +93,9 @@ export const DEFAULT_AUDIO_CONFIG: AudioConfig = {
 };
 
 export const DEFAULT_SPEAKER_CONFIG: SpeakerDetectionConfig = {
-  minSpeechDuration: 200,
-  silenceThreshold: 0.02,
-  speakerChangeThreshold: 0.3,
+  minSpeechDuration: 100, // Lowered for faster response
+  silenceThreshold: 0.01, // Lowered for better sensitivity
+  speakerChangeThreshold: 0.35, // Threshold for detecting different speaker
   maxSpeakers: 5,
 };
 

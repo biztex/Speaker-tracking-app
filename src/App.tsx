@@ -1,4 +1,4 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useState } from 'react';
 import { ThemeProvider } from './contexts/ThemeContext';
 import {
   Header,
@@ -6,10 +6,15 @@ import {
   SessionControls,
   Visualization,
   SpeakerList,
+  SpeakerCountSelector,
+  DebugOverlay,
 } from './components';
 import { useTimer, useAudioProcessor } from './hooks';
 
 const AppContent: React.FC = () => {
+  const [speakerCount, setSpeakerCount] = useState(2);
+  const [showDebug, setShowDebug] = useState(false);
+  
   const { time, start: startTimer, stop: stopTimer, reset: resetTimer, formatTime } = useTimer();
   
   const {
@@ -22,7 +27,9 @@ const AppContent: React.FC = () => {
     stop: stopAudio,
     reset: resetAudio,
     isVoiceActive,
-  } = useAudioProcessor({ maxSpeakers: 5 });
+  } = useAudioProcessor({ maxSpeakers: speakerCount });
+
+  const isRunning = status === 'running';
 
   const handleStart = useCallback(async () => {
     await startAudio();
@@ -39,6 +46,10 @@ const AppContent: React.FC = () => {
     resetTimer();
   }, [resetAudio, resetTimer]);
 
+  const handleSpeakerCountChange = useCallback((count: number) => {
+    setSpeakerCount(count);
+  }, []);
+
   return (
     <div className="min-h-screen bg-[var(--color-bg-primary)] text-[var(--color-text-primary)] transition-colors duration-300">
       <div className="flex flex-col min-h-screen">
@@ -51,6 +62,17 @@ const AppContent: React.FC = () => {
             {/* Timer Section */}
             <section className="flex flex-col items-center py-6 sm:py-8">
               <SessionTimer time={time} status={status} formatTime={formatTime} />
+            </section>
+
+            {/* Speaker Count Selector */}
+            <section className="flex justify-center">
+              <SpeakerCountSelector
+                value={speakerCount}
+                onChange={handleSpeakerCountChange}
+                disabled={isRunning}
+                min={2}
+                max={5}
+              />
             </section>
 
             {/* Controls Section */}
@@ -69,7 +91,7 @@ const AppContent: React.FC = () => {
               <Visualization
                 audioFeatures={audioFeatures}
                 currentSpeakerId={currentSpeakerId}
-                isActive={isVoiceActive && status === 'running'}
+                isActive={isVoiceActive && isRunning}
               />
             </section>
 
@@ -92,6 +114,15 @@ const AppContent: React.FC = () => {
           </div>
         </main>
       </div>
+
+      {/* Debug Overlay */}
+      <DebugOverlay
+        audioFeatures={audioFeatures}
+        isVoiceActive={isVoiceActive}
+        currentSpeakerId={currentSpeakerId}
+        showDebug={showDebug}
+        onToggle={() => setShowDebug(!showDebug)}
+      />
     </div>
   );
 };

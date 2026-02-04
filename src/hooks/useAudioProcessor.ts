@@ -52,23 +52,25 @@ export function useAudioProcessor(
   const lastSpeakingTimeRef = useRef<number>(Date.now());
   const speakersRef = useRef<Speaker[]>([]);
 
-  // Initialize speakers
-  const initializeSpeakers = useCallback((count: number) => {
-    const initialSpeakers: Speaker[] = [];
-    for (let i = 0; i < count; i++) {
-      initialSpeakers.push({
-        id: i,
-        name: `Speaker ${i + 1}`,
-        color: SPEAKER_COLORS[i],
-        totalTime: 0,
-        isActive: false,
-        lastActiveTime: null,
-      });
-    }
-    setSpeakers(initialSpeakers);
-    speakersRef.current = initialSpeakers;
-    return initialSpeakers;
-  }, []);
+  // Add a new speaker dynamically
+  const addSpeaker = useCallback((speakerId: number) => {
+    if (speakerId < 0 || speakerId >= maxSpeakers) return;
+    
+    // Check if speaker already exists
+    if (speakersRef.current.find(s => s.id === speakerId)) return;
+    
+    const newSpeaker: Speaker = {
+      id: speakerId,
+      name: `Speaker ${speakerId + 1}`,
+      color: SPEAKER_COLORS[speakerId],
+      totalTime: 0,
+      isActive: false,
+      lastActiveTime: null,
+    };
+    
+    speakersRef.current = [...speakersRef.current, newSpeaker].sort((a, b) => a.id - b.id);
+    setSpeakers([...speakersRef.current]);
+  }, [maxSpeakers]);
 
   // Process audio frame
   const processAudioFrame = useCallback(() => {
@@ -100,17 +102,9 @@ export function useAudioProcessor(
 
       // Ensure speaker exists in our list
       if (detectedSpeakerId >= 0 && detectedSpeakerId < maxSpeakers) {
-        // Check if we need to add a new speaker
+        // Add new speaker if detected
         if (result.isNewSpeaker && !speakersRef.current.find(s => s.id === detectedSpeakerId)) {
-          const newSpeaker: Speaker = {
-            id: detectedSpeakerId,
-            name: `Speaker ${detectedSpeakerId + 1}`,
-            color: SPEAKER_COLORS[detectedSpeakerId],
-            totalTime: 0,
-            isActive: false,
-            lastActiveTime: null,
-          };
-          speakersRef.current = [...speakersRef.current, newSpeaker];
+          addSpeaker(detectedSpeakerId);
         }
 
         // Update speaking time for previous speaker
@@ -162,7 +156,7 @@ export function useAudioProcessor(
 
     // Continue processing
     animationFrameRef.current = requestAnimationFrame(processAudioFrame);
-  }, [status, maxSpeakers, onSpeakerChange, onVoiceActivity]);
+  }, [status, maxSpeakers, onSpeakerChange, onVoiceActivity, addSpeaker]);
 
   // Start audio capture
   const start = useCallback(async () => {
@@ -199,8 +193,10 @@ export function useAudioProcessor(
       source.connect(analyser);
       sourceRef.current = source;
 
-      // Initialize with minimum speakers
-      initializeSpeakers(maxSpeakers);
+      // Don't pre-initialize speakers - they will be added dynamically when detected
+      // Clear any existing speakers
+      speakersRef.current = [];
+      setSpeakers([]);
 
       // Reset detector
       speakerDetectorRef.current = resetDetector(maxSpeakers);
@@ -217,7 +213,7 @@ export function useAudioProcessor(
       setError(errorMessage);
       console.error('Audio start error:', err);
     }
-  }, [maxSpeakers, initializeSpeakers, processAudioFrame]);
+  }, [maxSpeakers, processAudioFrame]);
 
   // Stop audio capture
   const stop = useCallback(() => {

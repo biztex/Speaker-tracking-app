@@ -5,8 +5,8 @@ import type { AudioFeatures, VoiceProfile } from '../types';
  * This is a simplified approach using pitch and spectral features
  */
 
-const PROFILE_SAMPLES_THRESHOLD = 10; // Minimum samples before profile is stable
-const SPEAKER_CHANGE_THRESHOLD = 0.4; // Threshold for detecting speaker change
+const PROFILE_SAMPLES_THRESHOLD = 5; // Minimum samples before profile is stable (lowered for faster learning)
+const SPEAKER_CHANGE_THRESHOLD = 0.35; // Threshold for detecting speaker change
 
 export interface SpeakerDetector {
   profiles: Map<number, VoiceProfile>;
@@ -96,18 +96,28 @@ export function detectSpeaker(
   detector: SpeakerDetector,
   features: AudioFeatures
 ): { speakerId: number; isNew: boolean; confidence: number } {
-  // If no valid pitch detected, return current speaker or -1
-  if (features.pitch < 60 || features.pitch > 400) {
+  // If no profiles exist yet, create the first speaker
+  if (detector.profiles.size === 0) {
     return {
-      speakerId: detector.currentSpeakerId ?? -1,
+      speakerId: 0,
+      isNew: true,
+      confidence: 1.0,
+    };
+  }
+
+  // If pitch is invalid but we have a current speaker, keep it
+  // This prevents constant speaker switching during unclear audio
+  const hasPitch = features.pitch > 50 && features.pitch < 500;
+  if (!hasPitch && detector.currentSpeakerId !== null) {
+    return {
+      speakerId: detector.currentSpeakerId,
       isNew: false,
-      confidence: 0,
+      confidence: 0.5,
     };
   }
 
   let bestSpeakerId = -1;
   let bestSimilarity = 0;
-  let isNew = false;
 
   // Compare with existing profiles
   for (const [speakerId, profile] of detector.profiles) {
@@ -119,15 +129,15 @@ export function detectSpeaker(
   }
 
   // Decide if this is a new speaker or matches an existing one
+  let isNew = false;
+  
   if (bestSimilarity < SPEAKER_CHANGE_THRESHOLD && detector.speakerCount < detector.maxSpeakers) {
-    // New speaker detected
+    // New speaker detected - significantly different voice characteristics
     isNew = true;
     bestSpeakerId = detector.speakerCount;
-  } else if (bestSimilarity < SPEAKER_CHANGE_THRESHOLD) {
-    // Max speakers reached, assign to most similar
-    if (bestSpeakerId === -1) {
-      bestSpeakerId = 0;
-    }
+  } else if (bestSpeakerId === -1) {
+    // Fallback: if no match found at all, use current speaker or speaker 0
+    bestSpeakerId = detector.currentSpeakerId ?? 0;
   }
 
   return {
