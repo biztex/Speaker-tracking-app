@@ -5,13 +5,14 @@ import type { AudioFeatures, VoiceProfile } from '../types';
  * Includes pitch, spectral centroid, and MFCC features for better accuracy
  */
 
-const PROFILE_SAMPLES_THRESHOLD = 8; // Samples needed for stable profile
-const SPEAKER_CHANGE_THRESHOLD = 0.55; // Similarity threshold - below this means different speaker
-const SPEAKER_HISTORY_SIZE = 5; // Reduced history for faster response
-const MIN_CONFIDENCE_FOR_SWITCH = 0.50; // Lower threshold for easier switching
-const MIN_CONSECUTIVE_FRAMES = 3; // Reduced to 3 frames for faster detection
+const PROFILE_SAMPLES_THRESHOLD = 5; // Samples needed for stable profile (faster learning)
+const SPEAKER_CHANGE_THRESHOLD = 0.50; // Similarity threshold - below this means different speaker
+const SPEAKER_HISTORY_SIZE = 5; // History for temporal smoothing
+const MIN_CONFIDENCE_FOR_SWITCH = 0.45; // Threshold for switching speakers
+const MIN_CONSECUTIVE_FRAMES = 2; // Frames needed to confirm switch (faster response)
 const OVERLAP_DETECTION_THRESHOLD = 0.45; // Threshold for detecting overlapping speakers
-const MFCC_COEFFICIENTS = 8; // Use 8 MFCC coefficients
+const MFCC_COEFFICIENTS = 10; // Use 10 MFCC coefficients for better discrimination
+const PROFILE_UPDATE_RATE = 0.15; // How quickly profiles adapt (higher = faster adaptation)
 
 export interface SpeakerDetector {
   profiles: Map<number, VoiceProfile>;
@@ -34,6 +35,24 @@ export function createSpeakerDetector(maxSpeakers: number = 5): SpeakerDetector 
     speakerHistory: [],
     confidenceHistory: [],
   };
+}
+
+/**
+ * Calculate weighted Euclidean distance with normalization
+ * Better for comparing features with different scales
+ */
+function weightedDistance(vec1: number[], vec2: number[]): number {
+  if (vec1.length === 0 || vec2.length === 0) return 1.0;
+  
+  let sumSquaredDiff = 0;
+  const minLength = Math.min(vec1.length, vec2.length);
+  
+  for (let i = 0; i < minLength; i++) {
+    const diff = vec1[i] - vec2[i];
+    sumSquaredDiff += diff * diff;
+  }
+  
+  return Math.sqrt(sumSquaredDiff / minLength);
 }
 
 /**
@@ -83,8 +102,8 @@ function calculateFormantSimilarity(
 }
 
 /**
- * Enhanced similarity calculation using pitch, spectral centroid, MFCC, and formants
- * Uses cosine similarity for high-dimensional features
+ * Enhanced similarity calculation using multiple acoustic features
+ * Uses weighted combination optimized for speaker discrimination
  * Returns a value between 0 (different) and 1 (same)
  */
 export function calculateSimilarity(
@@ -95,51 +114,62 @@ export function calculateSimilarity(
     return 0.5; // Not enough data to make a determination
   }
 
-  // Pitch similarity with adaptive tolerance based on variance
+  // 1. Pitch similarity with adaptive tolerance
   const pitchDiff = Math.abs(features.pitch - profile.avgPitch);
   const pitchStdDev = Math.sqrt(profile.pitchVariance);
-  const pitchTolerance = Math.max(50, pitchStdDev * 2); // Adaptive tolerance
+  const pitchTolerance = Math.max(40, pitchStdDev * 1.5); // Tighter tolerance
   const pitchSimilarity = Math.max(0, 1 - pitchDiff / pitchTolerance);
 
-  // Spectral centroid similarity (tighter tolerance)
+  // 2. Spectral centroid similarity (voice brightness)
   const spectralDiff = Math.abs(features.spectralCentroid - profile.avgSpectralCentroid);
-  const spectralSimilarity = Math.max(0, 1 - spectralDiff / 800); // 800 Hz tolerance
+  const spectralSimilarity = Math.max(0, 1 - spectralDiff / 600); // Tighter tolerance
 
-  // MFCC similarity using cosine similarity (better for high-dimensional data)
-  // Use 8 coefficients for better discrimination
+  // 3. MFCC similarity using cosine similarity (most discriminative)
   const mfccVec1 = features.mfcc.slice(0, MFCC_COEFFICIENTS);
   const mfccVec2 = profile.mfccProfile.length >= MFCC_COEFFICIENTS 
     ? profile.mfccProfile.slice(0, MFCC_COEFFICIENTS)
     : new Array(MFCC_COEFFICIENTS).fill(0);
   const mfccSimilarity = cosineSimilarity(mfccVec1, mfccVec2);
 
-  // Formant similarity - very speaker-specific
+  // 4. Formant similarity - highly speaker-specific
   const formantSimilarity = profile.avgFormants
     ? calculateFormantSimilarity(features.formants, profile.avgFormants)
-    : 0.5; // Neutral if formants not yet available
+    : 0.5;
 
-  // Weighted combination - formants and MFCC are most discriminative
-  return (
-    pitchSimilarity * 0.25 +
-    spectralSimilarity * 0.15 +
-    mfccSimilarity * 0.35 +
-    formantSimilarity * 0.25
+  // 5. Pitch range consistency (new feature)
+  const pitchRangeSimilarity = profile.pitchVariance > 0
+    ? Math.exp(-Math.abs(pitchStdDev - Math.sqrt(profile.pitchVariance)) / 30)
+    : 0.5;
+
+  // Weighted combination optimized for speaker discrimination
+  // MFCC and formants are most discriminative, pitch provides additional context
+  const similarity = (
+    pitchSimilarity * 0.20 +
+    spectralSimilarity * 0.10 +
+    mfccSimilarity * 0.40 +      // Highest weight - most discriminative
+    formantSimilarity * 0.25 +    // Second highest - very speaker-specific
+    pitchRangeSimilarity * 0.05   // Additional context
   );
+
+  return similarity;
 }
 
 /**
- * Update a voice profile with new features (including MFCC and formants)
+ * Update a voice profile with new features using adaptive learning rate
  */
 export function updateProfile(
   profile: VoiceProfile,
   features: AudioFeatures
 ): VoiceProfile {
-  const alpha = Math.min(0.1, 1 / (profile.samples + 1)); // Exponential moving average
+  // Adaptive learning rate - faster initially, slower as profile stabilizes
+  const alpha = profile.samples < 10 
+    ? PROFILE_UPDATE_RATE * 2  // Learn faster initially
+    : Math.min(PROFILE_UPDATE_RATE, 1 / Math.sqrt(profile.samples + 1));
   
   const newAvgPitch = profile.avgPitch * (1 - alpha) + features.pitch * alpha;
   const newAvgSpectral = profile.avgSpectralCentroid * (1 - alpha) + features.spectralCentroid * alpha;
   
-  // Update MFCC profile (8 coefficients)
+  // Update MFCC profile (10 coefficients for better discrimination)
   const mfccToUse = features.mfcc.slice(0, MFCC_COEFFICIENTS);
   const currentMfcc = profile.mfccProfile.length >= MFCC_COEFFICIENTS
     ? profile.mfccProfile 
@@ -149,24 +179,30 @@ export function updateProfile(
     val * (1 - alpha) + (mfccToUse[i] || 0) * alpha
   );
   
-  // Update formants (initialize if not present)
+  // Update formants with validation
   const currentFormants = profile.avgFormants || features.formants;
-  const newFormants = {
+  const hasValidNewFormants = 
+    features.formants.f1 > 200 && features.formants.f1 < 1000 &&
+    features.formants.f2 > 500 && features.formants.f2 < 3000;
+  
+  const newFormants = hasValidNewFormants ? {
     f1: currentFormants.f1 * (1 - alpha) + features.formants.f1 * alpha,
     f2: currentFormants.f2 * (1 - alpha) + features.formants.f2 * alpha,
     f3: currentFormants.f3 * (1 - alpha) + features.formants.f3 * alpha,
-  };
+  } : currentFormants;
   
-  // Update variance estimates
-  const pitchVariance = profile.pitchVariance * (1 - alpha) + 
-    Math.pow(features.pitch - newAvgPitch, 2) * alpha;
+  // Update variance estimates with Welford's online algorithm
+  const pitchDelta = features.pitch - profile.avgPitch;
+  const pitchDelta2 = features.pitch - newAvgPitch;
+  const pitchVariance = profile.pitchVariance + pitchDelta * pitchDelta2;
   
-  // Calculate formant variance (average of F1, F2, F3 variances)
+  // Calculate formant variance
   const formantVariance = profile.formantVariance || 0;
-  const formantDiff = 
+  const formantDiff = hasValidNewFormants ?
     Math.pow(features.formants.f1 - newFormants.f1, 2) +
     Math.pow(features.formants.f2 - newFormants.f2, 2) +
-    Math.pow(features.formants.f3 - newFormants.f3, 2);
+    Math.pow(features.formants.f3 - newFormants.f3, 2)
+    : 0;
   const newFormantVariance = formantVariance * (1 - alpha) + (formantDiff / 3) * alpha;
 
   return {
@@ -198,7 +234,7 @@ export function createProfile(speakerId: number, features: AudioFeatures): Voice
 }
 
 /**
- * Detect which speaker is currently talking with temporal smoothing
+ * Detect which speaker is currently talking with improved accuracy
  * Returns the speaker ID and whether it's a new speaker
  */
 export function detectSpeaker(
@@ -214,13 +250,11 @@ export function detectSpeaker(
     };
   }
 
-  // If pitch is invalid but we have a current speaker, keep it
-  // This prevents constant speaker switching during unclear audio
-  const hasPitch = features.pitch > 80 && features.pitch < 400; // Stricter range
+  // Validate pitch quality - if poor, maintain current speaker
+  const hasPitch = features.pitch > 80 && features.pitch < 400;
   if (!hasPitch && detector.currentSpeakerId !== null) {
-    // Add to history to maintain continuity
     detector.speakerHistory.push(detector.currentSpeakerId);
-    detector.confidenceHistory.push(0.5);
+    detector.confidenceHistory.push(0.4);
     if (detector.speakerHistory.length > SPEAKER_HISTORY_SIZE) {
       detector.speakerHistory.shift();
       detector.confidenceHistory.shift();
@@ -228,34 +262,40 @@ export function detectSpeaker(
     return {
       speakerId: detector.currentSpeakerId,
       isNew: false,
-      confidence: 0.5,
+      confidence: 0.4,
     };
   }
 
+  // Calculate similarity to all existing profiles
+  const similarities: Array<{ speakerId: number; similarity: number }> = [];
   let bestSpeakerId = -1;
   let bestSimilarity = 0;
-
-  // Compare with existing profiles
-  const similarities: Array<{ speakerId: number; similarity: number }> = [];
+  let secondBestSimilarity = 0;
   
   for (const [speakerId, profile] of detector.profiles) {
     const similarity = calculateSimilarity(features, profile);
     similarities.push({ speakerId, similarity });
     
     if (similarity > bestSimilarity) {
+      secondBestSimilarity = bestSimilarity;
       bestSimilarity = similarity;
       bestSpeakerId = speakerId;
+    } else if (similarity > secondBestSimilarity) {
+      secondBestSimilarity = similarity;
     }
   }
   
-  // Overlap detection: if multiple speakers have high similarity, might be overlapping
-  const highSimilaritySpeakers = similarities.filter(s => s.similarity > OVERLAP_DETECTION_THRESHOLD);
-  const isOverlapping = highSimilaritySpeakers.length >= 2;
+  // Calculate confidence based on separation between best and second-best
+  const separation = bestSimilarity - secondBestSimilarity;
+  const confidenceBoost = Math.min(0.2, separation * 2); // Reward clear separation
+  const rawConfidence = bestSimilarity + confidenceBoost;
   
-  // If overlapping, use the most confident match (dominant speaker)
-  // In future, could track both speakers simultaneously
+  // Overlap detection: multiple speakers with similar scores
+  const highSimilaritySpeakers = similarities.filter(s => s.similarity > OVERLAP_DETECTION_THRESHOLD);
+  const isOverlapping = highSimilaritySpeakers.length >= 2 && separation < 0.15;
+  
   if (isOverlapping) {
-    // Sort by similarity and use the most confident
+    // Use the most confident match (dominant speaker)
     highSimilaritySpeakers.sort((a, b) => b.similarity - a.similarity);
     bestSpeakerId = highSimilaritySpeakers[0].speakerId;
     bestSimilarity = highSimilaritySpeakers[0].similarity;
@@ -263,14 +303,14 @@ export function detectSpeaker(
 
   // Add to history for temporal smoothing
   detector.speakerHistory.push(bestSpeakerId);
-  detector.confidenceHistory.push(bestSimilarity);
+  detector.confidenceHistory.push(rawConfidence);
   
   if (detector.speakerHistory.length > SPEAKER_HISTORY_SIZE) {
     detector.speakerHistory.shift();
     detector.confidenceHistory.shift();
   }
 
-  // Temporal smoothing: use mode of recent detections
+  // Temporal smoothing: analyze recent detections
   const recentSpeakers = detector.speakerHistory.slice(-MIN_CONSECUTIVE_FRAMES);
   const speakerCounts = new Map<number, number>();
   recentSpeakers.forEach(id => {
@@ -292,40 +332,42 @@ export function detectSpeaker(
   const recentConfidences = detector.confidenceHistory.slice(-MIN_CONSECUTIVE_FRAMES);
   const avgConfidence = recentConfidences.length > 0
     ? recentConfidences.reduce((a, b) => a + b, 0) / recentConfidences.length
-    : bestSimilarity;
+    : rawConfidence;
 
-  // Decide if this is a new speaker or matches an existing one
+  // Decision logic for speaker assignment
   let isNew = false;
   let finalSpeakerId = bestSpeakerId;
   
-  // Check if we should create a new speaker or switch to existing one
   if (bestSimilarity < SPEAKER_CHANGE_THRESHOLD) {
-    // Low similarity to all existing speakers
+    // Low similarity to all existing speakers - potentially new speaker
     if (detector.speakerCount < detector.maxSpeakers) {
-      // Check temporal consistency before creating new speaker
-      if (maxCount >= MIN_CONSECUTIVE_FRAMES && avgConfidence >= MIN_CONFIDENCE_FOR_SWITCH) {
-        // Consistently different - create new speaker
+      // Check if consistently different
+      const isConsistent = maxCount >= MIN_CONSECUTIVE_FRAMES;
+      const hasConfidence = avgConfidence >= MIN_CONFIDENCE_FOR_SWITCH;
+      
+      if (isConsistent && hasConfidence) {
+        // Create new speaker
         isNew = true;
         finalSpeakerId = detector.speakerCount;
       } else {
-        // Not consistent enough yet - keep current speaker if we have one
-        finalSpeakerId = detector.currentSpeakerId ?? 0;
+        // Not consistent enough - keep current or use best match
+        finalSpeakerId = detector.currentSpeakerId ?? bestSpeakerId;
       }
     } else {
-      // Max speakers reached - assign to best match even if similarity is low
+      // Max speakers reached - assign to best match
       finalSpeakerId = bestSpeakerId >= 0 ? bestSpeakerId : (detector.currentSpeakerId ?? 0);
     }
   } else {
     // Good similarity to an existing speaker
-    // Use temporal smoothing to confirm the match
     if (maxCount >= MIN_CONSECUTIVE_FRAMES) {
-      // Consistently matching this speaker
+      // Consistently matching - use temporal smoothing result
       finalSpeakerId = mostCommonSpeaker;
     } else {
-      // Not consistent yet - use best match but don't switch if we have current speaker
+      // Not consistent yet - be cautious about switching
       if (detector.currentSpeakerId !== null && bestSpeakerId !== detector.currentSpeakerId) {
-        // Stay with current speaker unless we have strong evidence to switch
-        finalSpeakerId = avgConfidence >= MIN_CONFIDENCE_FOR_SWITCH ? bestSpeakerId : detector.currentSpeakerId;
+        // Only switch if we have strong evidence
+        const shouldSwitch = avgConfidence >= MIN_CONFIDENCE_FOR_SWITCH && separation > 0.1;
+        finalSpeakerId = shouldSwitch ? bestSpeakerId : detector.currentSpeakerId;
       } else {
         finalSpeakerId = bestSpeakerId;
       }

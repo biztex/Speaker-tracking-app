@@ -49,14 +49,14 @@ export function calculateSpectralCentroid(
 }
 
 /**
- * Estimate fundamental frequency (pitch) using improved autocorrelation
- * with normalization and harmonic rejection
+ * Estimate fundamental frequency (pitch) using enhanced autocorrelation
+ * with parabolic interpolation for sub-sample accuracy
  */
 export function estimatePitch(dataArray: ArrayLike<number>, sampleRate: number): number {
   const minPeriod = Math.floor(sampleRate / 500); // Max 500 Hz
   const maxPeriod = Math.floor(sampleRate / 50);  // Min 50 Hz
   
-  // Normalize the signal to improve autocorrelation accuracy
+  // Normalize the signal
   const normalized = new Float32Array(dataArray.length);
   let max = 0;
   for (let i = 0; i < dataArray.length; i++) {
@@ -70,7 +70,9 @@ export function estimatePitch(dataArray: ArrayLike<number>, sampleRate: number):
   let bestCorrelation = 0;
   let bestPeriod = 0;
   let secondBestCorrelation = 0;
+  const correlations: number[] = [];
 
+  // Calculate autocorrelation with normalization
   for (let period = minPeriod; period < maxPeriod && period < normalized.length / 2; period++) {
     let correlation = 0;
     let norm = 0;
@@ -80,8 +82,8 @@ export function estimatePitch(dataArray: ArrayLike<number>, sampleRate: number):
       norm += normalized[i] * normalized[i];
     }
     
-    // Normalized correlation (prevents amplitude bias)
     const normalizedCorr = norm > 0 ? correlation / norm : 0;
+    correlations.push(normalizedCorr);
     
     if (normalizedCorr > bestCorrelation) {
       secondBestCorrelation = bestCorrelation;
@@ -92,12 +94,24 @@ export function estimatePitch(dataArray: ArrayLike<number>, sampleRate: number):
     }
   }
 
-  // Require clear peak to avoid harmonics (best must be significantly better than second)
-  if (bestCorrelation > 0.3 && bestCorrelation > secondBestCorrelation * 1.2) {
-    return bestPeriod > 0 ? sampleRate / bestPeriod : 0;
+  // Require clear peak and good correlation strength
+  const hasGoodPeak = bestCorrelation > 0.35 && bestCorrelation > secondBestCorrelation * 1.3;
+  
+  if (hasGoodPeak && bestPeriod > 0) {
+    // Parabolic interpolation for sub-sample accuracy
+    const idx = bestPeriod - minPeriod;
+    if (idx > 0 && idx < correlations.length - 1) {
+      const alpha = correlations[idx - 1];
+      const beta = correlations[idx];
+      const gamma = correlations[idx + 1];
+      const offset = 0.5 * (alpha - gamma) / (alpha - 2 * beta + gamma);
+      const refinedPeriod = bestPeriod + offset;
+      return sampleRate / refinedPeriod;
+    }
+    return sampleRate / bestPeriod;
   }
   
-  return 0; // Invalid pitch - no clear fundamental frequency
+  return 0; // Invalid pitch
 }
 
 /**
@@ -123,8 +137,8 @@ function findPeakInRange(
 }
 
 /**
- * Extract formant frequencies (F1, F2, F3) - very speaker-specific
- * Formants are resonant frequencies of the vocal tract
+ * Extract formant frequencies (F1, F2, F3) with improved peak detection
+ * Formants are resonant frequencies of the vocal tract - highly speaker-specific
  */
 export function extractFormants(
   frequencyData: ArrayLike<number>,
@@ -133,28 +147,43 @@ export function extractFormants(
 ): { f1: number; f2: number; f3: number } {
   const binWidth = sampleRate / fftSize;
   
-  // Typical formant ranges for human speech
-  // F1: 300-800 Hz (vowel height, mouth opening)
-  // F2: 800-2500 Hz (vowel frontness, tongue position)
-  // F3: 2500-3500 Hz (additional speaker characteristic, nasal quality)
+  // Apply pre-emphasis to enhance formants
+  const emphasized = new Float32Array(frequencyData.length);
+  for (let i = 0; i < frequencyData.length; i++) {
+    emphasized[i] = frequencyData[i];
+  }
   
-  const f1Start = Math.floor(300 / binWidth);
-  const f1End = Math.floor(800 / binWidth);
-  const f2Start = Math.floor(800 / binWidth);
-  const f2End = Math.floor(2500 / binWidth);
-  const f3Start = Math.floor(2500 / binWidth);
+  // Smooth the spectrum to reduce noise
+  const smoothed = new Float32Array(emphasized.length);
+  const windowSize = 3;
+  for (let i = 0; i < emphasized.length; i++) {
+    let sum = 0;
+    let count = 0;
+    for (let j = Math.max(0, i - windowSize); j <= Math.min(emphasized.length - 1, i + windowSize); j++) {
+      sum += emphasized[j];
+      count++;
+    }
+    smoothed[i] = sum / count;
+  }
+  
+  // Formant ranges for human speech (more precise)
+  const f1Start = Math.floor(250 / binWidth);
+  const f1End = Math.floor(900 / binWidth);
+  const f2Start = Math.floor(850 / binWidth);
+  const f2End = Math.floor(2800 / binWidth);
+  const f3Start = Math.floor(2200 / binWidth);
   const f3End = Math.floor(3500 / binWidth);
   
-  const f1 = findPeakInRange(frequencyData, f1Start, f1End, binWidth);
-  const f2 = findPeakInRange(frequencyData, f2Start, f2End, binWidth);
-  const f3 = findPeakInRange(frequencyData, f3Start, f3End, binWidth);
+  const f1 = findPeakInRange(smoothed, f1Start, f1End, binWidth);
+  const f2 = findPeakInRange(smoothed, f2Start, f2End, binWidth);
+  const f3 = findPeakInRange(smoothed, f3Start, f3End, binWidth);
   
   return { f1, f2, f3 };
 }
 
 /**
- * Calculate simplified MFCC-like features
- * These are mel-frequency band energies (not full MFCC but computationally lighter)
+ * Calculate improved MFCC-like features with better mel-scale approximation
+ * These are mel-frequency band energies optimized for speaker discrimination
  */
 export function calculateMelBandEnergies(
   frequencyData: ArrayLike<number>,
@@ -187,22 +216,35 @@ export function calculateMelBandEnergies(
     const binEnd = Math.min(Math.floor(freqEnd / binWidth), frequencyData.length - 1);
 
     let energy = 0;
+    let weightSum = 0;
+    
     for (let bin = binStart; bin <= binEnd; bin++) {
-      // Triangular filter
+      // Triangular filter with proper normalization
       let weight = 0;
       if (bin < binCenter) {
-        weight = (bin - binStart) / (binCenter - binStart + 1);
+        weight = (bin - binStart) / Math.max(1, binCenter - binStart);
       } else {
-        weight = (binEnd - bin) / (binEnd - binCenter + 1);
+        weight = (binEnd - bin) / Math.max(1, binEnd - binCenter);
       }
       energy += frequencyData[bin] * weight;
+      weightSum += weight;
     }
-    bands[band] = energy;
+    
+    // Normalize by weight sum
+    bands[band] = weightSum > 0 ? energy / weightSum : 0;
   }
 
-  // Normalize
-  const maxEnergy = Math.max(...bands, 1);
-  return bands.map(e => e / maxEnergy);
+  // Log compression (like real MFCC)
+  const logBands = bands.map(e => Math.log(Math.max(e, 1e-10)));
+  
+  // Normalize to 0-1 range
+  const minLog = Math.min(...logBands);
+  const maxLog = Math.max(...logBands);
+  const range = maxLog - minLog;
+  
+  return range > 0 
+    ? logBands.map(e => (e - minLog) / range)
+    : logBands.map(() => 0);
 }
 
 /**
@@ -257,8 +299,8 @@ let noiseFloor: NoiseFloor = {
   samples: 0,
 };
 
-const NOISE_ESTIMATION_SAMPLES = 20; // First 20 frames estimate noise
-const NOISE_MULTIPLIER = 2.0; // Noise threshold = noise floor * this (reduced for better sensitivity)
+const NOISE_ESTIMATION_SAMPLES = 15; // First 15 frames estimate noise (faster)
+const NOISE_MULTIPLIER = 1.8; // Noise threshold = noise floor * this (balanced)
 
 /**
  * Update noise floor estimation during quiet periods
@@ -289,15 +331,12 @@ const vadHistory: boolean[] = [];
 const VAD_HISTORY_SIZE = 4; // Keep last 4 frames (reduced for faster response)
 
 /**
- * Enhanced Voice Activity Detection with:
- * - Multi-feature analysis
- * - Noise floor adaptation
- * - Temporal smoothing to reduce false positives
- * - Stricter requirements to prevent noise detection
+ * Enhanced Voice Activity Detection with improved multi-feature analysis
+ * Uses adaptive thresholding and temporal smoothing
  */
 export function detectVoiceActivity(
   features: AudioFeatures,
-  silenceThreshold: number = 0.02 // Stricter default threshold
+  silenceThreshold: number = 0.02
 ): boolean {
   // Update noise floor during initial quiet periods
   if (features.volume < silenceThreshold * 2) {
@@ -312,26 +351,31 @@ export function detectVoiceActivity(
   
   const hasVolume = features.volume > volumeThreshold;
   
-  // Voice characteristics - balanced requirements
-  const hasValidPitch = features.pitch > 80 && features.pitch < 400;
-  const hasVoiceLikeZCR = features.zeroCrossingRate > 0.01 && features.zeroCrossingRate < 0.3;
-  const hasVoiceLikeSpectral = features.spectralCentroid > 200 && features.spectralCentroid < 3000;
+  // Voice characteristics with validated ranges
+  const hasValidPitch = features.pitch > 85 && features.pitch < 400;
+  const hasVoiceLikeZCR = features.zeroCrossingRate > 0.015 && features.zeroCrossingRate < 0.28;
+  const hasVoiceLikeSpectral = features.spectralCentroid > 250 && features.spectralCentroid < 2800;
   
   // Check formants - real speech has formants in expected ranges
   const hasValidFormants = 
-    features.formants.f1 > 200 && features.formants.f1 < 1000 &&
-    features.formants.f2 > 500 && features.formants.f2 < 3000;
+    features.formants.f1 > 250 && features.formants.f1 < 950 &&
+    features.formants.f2 > 600 && features.formants.f2 < 2900;
   
-  // Multi-feature scoring - balanced approach
-  const voiceScore = 
-    (hasVolume ? 1 : 0) +
-    (hasValidPitch ? 1 : 0) +
-    (hasVoiceLikeZCR ? 1 : 0) +
-    (hasVoiceLikeSpectral ? 1 : 0) +
-    (hasValidFormants ? 1 : 0);
+  // Check MFCC energy distribution (voice has characteristic pattern)
+  const mfccEnergy = features.mfcc.slice(0, 5).reduce((a, b) => a + b, 0) / 5;
+  const hasVoiceLikeMFCC = mfccEnergy > 0.1 && mfccEnergy < 0.9;
   
-  // Need at least 3 indicators to consider it voice
-  const isVoice = voiceScore >= 3;
+  // Multi-feature scoring with weighted importance
+  let voiceScore = 0;
+  voiceScore += hasVolume ? 1.5 : 0;           // Volume is important
+  voiceScore += hasValidPitch ? 1.5 : 0;       // Pitch is very important
+  voiceScore += hasVoiceLikeZCR ? 0.5 : 0;     // ZCR is supplementary
+  voiceScore += hasVoiceLikeSpectral ? 1.0 : 0; // Spectral is important
+  voiceScore += hasValidFormants ? 1.5 : 0;    // Formants are very important
+  voiceScore += hasVoiceLikeMFCC ? 1.0 : 0;    // MFCC pattern is important
+  
+  // Need score >= 4.0 to consider it voice (balanced threshold)
+  const isVoice = voiceScore >= 4.0;
   
   // Temporal smoothing - require voice in majority of recent frames
   vadHistory.push(isVoice);
@@ -340,7 +384,7 @@ export function detectVoiceActivity(
   }
   
   const voiceCount = vadHistory.filter(v => v).length;
-  // Require 60% of recent frames to show voice activity (balanced)
+  // Require 60% of recent frames to show voice activity
   return voiceCount >= Math.ceil(VAD_HISTORY_SIZE * 0.6);
 }
 

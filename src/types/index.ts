@@ -97,9 +97,9 @@ export const DEFAULT_AUDIO_CONFIG: AudioConfig = {
 };
 
 export const DEFAULT_SPEAKER_CONFIG: SpeakerDetectionConfig = {
-  minSpeechDuration: 250, // Balanced duration to filter noise while being responsive
+  minSpeechDuration: 200, // Faster response while filtering noise
   silenceThreshold: 0.02, // Balanced threshold
-  speakerChangeThreshold: 0.55, // Balanced threshold for speaker separation
+  speakerChangeThreshold: 0.50, // Optimized for discrimination
   maxSpeakers: 5,
 };
 
