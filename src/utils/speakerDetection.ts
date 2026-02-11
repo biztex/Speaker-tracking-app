@@ -38,24 +38,6 @@ export function createSpeakerDetector(maxSpeakers: number = 5): SpeakerDetector 
 }
 
 /**
- * Calculate weighted Euclidean distance with normalization
- * Better for comparing features with different scales
- */
-function weightedDistance(vec1: number[], vec2: number[]): number {
-  if (vec1.length === 0 || vec2.length === 0) return 1.0;
-  
-  let sumSquaredDiff = 0;
-  const minLength = Math.min(vec1.length, vec2.length);
-  
-  for (let i = 0; i < minLength; i++) {
-    const diff = vec1[i] - vec2[i];
-    sumSquaredDiff += diff * diff;
-  }
-  
-  return Math.sqrt(sumSquaredDiff / minLength);
-}
-
-/**
  * Calculate cosine similarity between two feature vectors
  * Better for high-dimensional features like MFCC
  */
