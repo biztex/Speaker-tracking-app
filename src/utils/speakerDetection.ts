@@ -5,13 +5,13 @@ import type { AudioFeatures, VoiceProfile } from '../types';
  * Includes pitch, spectral centroid, and MFCC features for better accuracy
  */
 
-const PROFILE_SAMPLES_THRESHOLD = 10; // Increased for more stable profiles
-const SPEAKER_CHANGE_THRESHOLD = 0.6; // Increased to require more difference between speakers
-const SPEAKER_HISTORY_SIZE = 7; // Keep last 7 detections for temporal smoothing
-const MIN_CONFIDENCE_FOR_SWITCH = 0.65; // Require 65% confidence to switch speakers
-const MIN_CONSECUTIVE_FRAMES = 4; // Require 4 consecutive frames to confirm switch (more stable)
+const PROFILE_SAMPLES_THRESHOLD = 8; // Samples needed for stable profile
+const SPEAKER_CHANGE_THRESHOLD = 0.55; // Similarity threshold - below this means different speaker
+const SPEAKER_HISTORY_SIZE = 5; // Reduced history for faster response
+const MIN_CONFIDENCE_FOR_SWITCH = 0.50; // Lower threshold for easier switching
+const MIN_CONSECUTIVE_FRAMES = 3; // Reduced to 3 frames for faster detection
 const OVERLAP_DETECTION_THRESHOLD = 0.45; // Threshold for detecting overlapping speakers
-const MFCC_COEFFICIENTS = 8; // Use 8 MFCC coefficients (was 5)
+const MFCC_COEFFICIENTS = 8; // Use 8 MFCC coefficients
 
 export interface SpeakerDetector {
   profiles: Map<number, VoiceProfile>;
@@ -298,29 +298,38 @@ export function detectSpeaker(
   let isNew = false;
   let finalSpeakerId = bestSpeakerId;
   
-  // Only switch if:
-  // 1. Confidence is high enough
-  // 2. Speaker is consistent across recent frames
-  // 3. It's significantly different from current speaker
-  const shouldSwitch = 
-    mostCommonSpeaker !== detector.currentSpeakerId &&
-    avgConfidence >= MIN_CONFIDENCE_FOR_SWITCH &&
-    maxCount >= MIN_CONSECUTIVE_FRAMES &&
-    bestSimilarity < SPEAKER_CHANGE_THRESHOLD;
-  
-  if (shouldSwitch && detector.speakerCount < detector.maxSpeakers) {
-    // New speaker detected
-    isNew = true;
-    finalSpeakerId = detector.speakerCount;
-  } else if (bestSimilarity < SPEAKER_CHANGE_THRESHOLD && detector.speakerCount < detector.maxSpeakers) {
-    // Low similarity but don't switch yet - use temporal smoothing result
-    finalSpeakerId = mostCommonSpeaker >= 0 ? mostCommonSpeaker : (detector.currentSpeakerId ?? 0);
-  } else if (bestSpeakerId === -1) {
-    // Fallback: if no match found at all, use current speaker or speaker 0
-    finalSpeakerId = detector.currentSpeakerId ?? 0;
+  // Check if we should create a new speaker or switch to existing one
+  if (bestSimilarity < SPEAKER_CHANGE_THRESHOLD) {
+    // Low similarity to all existing speakers
+    if (detector.speakerCount < detector.maxSpeakers) {
+      // Check temporal consistency before creating new speaker
+      if (maxCount >= MIN_CONSECUTIVE_FRAMES && avgConfidence >= MIN_CONFIDENCE_FOR_SWITCH) {
+        // Consistently different - create new speaker
+        isNew = true;
+        finalSpeakerId = detector.speakerCount;
+      } else {
+        // Not consistent enough yet - keep current speaker if we have one
+        finalSpeakerId = detector.currentSpeakerId ?? 0;
+      }
+    } else {
+      // Max speakers reached - assign to best match even if similarity is low
+      finalSpeakerId = bestSpeakerId >= 0 ? bestSpeakerId : (detector.currentSpeakerId ?? 0);
+    }
   } else {
-    // Use the best matching speaker (with temporal smoothing)
-    finalSpeakerId = mostCommonSpeaker >= 0 ? mostCommonSpeaker : bestSpeakerId;
+    // Good similarity to an existing speaker
+    // Use temporal smoothing to confirm the match
+    if (maxCount >= MIN_CONSECUTIVE_FRAMES) {
+      // Consistently matching this speaker
+      finalSpeakerId = mostCommonSpeaker;
+    } else {
+      // Not consistent yet - use best match but don't switch if we have current speaker
+      if (detector.currentSpeakerId !== null && bestSpeakerId !== detector.currentSpeakerId) {
+        // Stay with current speaker unless we have strong evidence to switch
+        finalSpeakerId = avgConfidence >= MIN_CONFIDENCE_FOR_SWITCH ? bestSpeakerId : detector.currentSpeakerId;
+      } else {
+        finalSpeakerId = bestSpeakerId;
+      }
+    }
   }
 
   return {

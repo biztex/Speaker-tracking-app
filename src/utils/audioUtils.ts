@@ -257,8 +257,8 @@ let noiseFloor: NoiseFloor = {
   samples: 0,
 };
 
-const NOISE_ESTIMATION_SAMPLES = 30; // First 30 frames estimate noise
-const NOISE_MULTIPLIER = 2.5; // Noise threshold = noise floor * this
+const NOISE_ESTIMATION_SAMPLES = 20; // First 20 frames estimate noise
+const NOISE_MULTIPLIER = 2.0; // Noise threshold = noise floor * this (reduced for better sensitivity)
 
 /**
  * Update noise floor estimation during quiet periods
@@ -286,7 +286,7 @@ export function resetNoiseFloor(): void {
 
 // Temporal smoothing for VAD
 const vadHistory: boolean[] = [];
-const VAD_HISTORY_SIZE = 5; // Keep last 5 frames
+const VAD_HISTORY_SIZE = 4; // Keep last 4 frames (reduced for faster response)
 
 /**
  * Enhanced Voice Activity Detection with:
@@ -304,15 +304,15 @@ export function detectVoiceActivity(
     updateNoiseFloor(features);
   }
 
-  // Adaptive threshold based on noise floor (more conservative)
+  // Adaptive threshold based on noise floor
   const volumeThreshold = Math.max(
     silenceThreshold,
-    noiseFloor.volume * NOISE_MULTIPLIER * 1.2 // 20% more conservative
+    noiseFloor.volume * NOISE_MULTIPLIER
   );
   
   const hasVolume = features.volume > volumeThreshold;
   
-  // Voice characteristics - much stricter requirements
+  // Voice characteristics - balanced requirements
   const hasValidPitch = features.pitch > 80 && features.pitch < 400;
   const hasVoiceLikeZCR = features.zeroCrossingRate > 0.01 && features.zeroCrossingRate < 0.3;
   const hasVoiceLikeSpectral = features.spectralCentroid > 200 && features.spectralCentroid < 3000;
@@ -322,7 +322,7 @@ export function detectVoiceActivity(
     features.formants.f1 > 200 && features.formants.f1 < 1000 &&
     features.formants.f2 > 500 && features.formants.f2 < 3000;
   
-  // Multi-feature scoring - require MORE indicators (stricter)
+  // Multi-feature scoring - balanced approach
   const voiceScore = 
     (hasVolume ? 1 : 0) +
     (hasValidPitch ? 1 : 0) +
@@ -330,19 +330,18 @@ export function detectVoiceActivity(
     (hasVoiceLikeSpectral ? 1 : 0) +
     (hasValidFormants ? 1 : 0);
   
-  // Need at least 3 indicators (was 2) to consider it voice - prevents noise
+  // Need at least 3 indicators to consider it voice
   const isVoice = voiceScore >= 3;
   
   // Temporal smoothing - require voice in majority of recent frames
-  // This prevents brief noise spikes from being detected as speech
   vadHistory.push(isVoice);
   if (vadHistory.length > VAD_HISTORY_SIZE) {
     vadHistory.shift();
   }
   
   const voiceCount = vadHistory.filter(v => v).length;
-  // Require 70% of recent frames (was 60%) to show voice activity - stricter
-  return voiceCount >= Math.ceil(VAD_HISTORY_SIZE * 0.7);
+  // Require 60% of recent frames to show voice activity (balanced)
+  return voiceCount >= Math.ceil(VAD_HISTORY_SIZE * 0.6);
 }
 
 /**
