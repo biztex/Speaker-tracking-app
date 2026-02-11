@@ -1,7 +1,7 @@
 import { useState, useRef, useCallback, useEffect } from 'react';
 import type { AudioFeatures, Speaker, SessionStatus } from '../types';
 import { DEFAULT_AUDIO_CONFIG, DEFAULT_SPEAKER_CONFIG, SPEAKER_COLORS } from '../types';
-import { extractAudioFeatures, detectVoiceActivity } from '../utils/audioUtils';
+import { extractAudioFeatures, detectVoiceActivity, resetNoiseFloor } from '../utils/audioUtils';
 import {
   createSpeakerDetector,
   processSpeakerDetection,
@@ -215,6 +215,9 @@ export function useAudioProcessor(
       speakersRef.current = [];
       setSpeakers([]);
 
+      // Reset noise floor estimation for new session
+      resetNoiseFloor();
+
       // Reset detector
       speakerDetectorRef.current = resetDetector(maxSpeakers);
       lastSpeakerIdRef.current = null;
@@ -297,6 +300,7 @@ export function useAudioProcessor(
     setAudioFeatures(null);
     setError(null);
     setStatus('idle');
+    resetNoiseFloor(); // Reset noise floor estimation
     speakerDetectorRef.current = resetDetector(maxSpeakers);
     lastSpeakerIdRef.current = null;
   }, [stop, maxSpeakers]);

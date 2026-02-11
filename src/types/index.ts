@@ -21,6 +21,7 @@ export interface AudioFeatures {
   spectralCentroid: number;
   zeroCrossingRate: number;
   mfcc: number[];
+  formants: { f1: number; f2: number; f3: number }; // Formant frequencies for speaker identification
   frequencyData: Uint8Array;
   waveformData: Uint8Array;
 }
@@ -31,6 +32,9 @@ export interface VoiceProfile {
   avgSpectralCentroid: number;
   pitchVariance: number;
   samples: number;
+  mfccProfile: number[]; // MFCC coefficients for better speaker differentiation
+  avgFormants: { f1: number; f2: number; f3: number }; // Average formant frequencies
+  formantVariance: number; // Variance of formant frequencies
 }
 
 // Session related types
@@ -93,9 +97,9 @@ export const DEFAULT_AUDIO_CONFIG: AudioConfig = {
 };
 
 export const DEFAULT_SPEAKER_CONFIG: SpeakerDetectionConfig = {
-  minSpeechDuration: 50, // Very fast response
-  silenceThreshold: 0.008, // Very sensitive threshold for VAD
-  speakerChangeThreshold: 0.35, // Threshold for detecting different speaker
+  minSpeechDuration: 300, // Further increased to filter brief noise spikes
+  silenceThreshold: 0.02, // Stricter threshold to prevent noise detection
+  speakerChangeThreshold: 0.6, // Higher threshold for better speaker separation
   maxSpeakers: 5,
 };
 
