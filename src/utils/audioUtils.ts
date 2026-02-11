@@ -70,7 +70,6 @@ export function estimatePitch(dataArray: ArrayLike<number>, sampleRate: number):
   let bestCorrelation = 0;
   let bestPeriod = 0;
   let secondBestCorrelation = 0;
-  let secondBestPeriod = 0;
 
   for (let period = minPeriod; period < maxPeriod && period < normalized.length / 2; period++) {
     let correlation = 0;
@@ -86,12 +85,10 @@ export function estimatePitch(dataArray: ArrayLike<number>, sampleRate: number):
     
     if (normalizedCorr > bestCorrelation) {
       secondBestCorrelation = bestCorrelation;
-      secondBestPeriod = bestPeriod;
       bestCorrelation = normalizedCorr;
       bestPeriod = period;
     } else if (normalizedCorr > secondBestCorrelation) {
       secondBestCorrelation = normalizedCorr;
-      secondBestPeriod = period;
     }
   }
 
