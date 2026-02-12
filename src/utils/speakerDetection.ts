@@ -283,39 +283,6 @@ export function detectSpeaker(
     bestSimilarity = highSimilaritySpeakers[0].similarity;
   }
 
-  // Add to history for temporal smoothing
-  detector.speakerHistory.push(bestSpeakerId);
-  detector.confidenceHistory.push(rawConfidence);
-  
-  if (detector.speakerHistory.length > SPEAKER_HISTORY_SIZE) {
-    detector.speakerHistory.shift();
-    detector.confidenceHistory.shift();
-  }
-
-  // Temporal smoothing: analyze recent detections
-  const recentSpeakers = detector.speakerHistory.slice(-MIN_CONSECUTIVE_FRAMES);
-  const speakerCounts = new Map<number, number>();
-  recentSpeakers.forEach(id => {
-    if (id >= 0) {
-      speakerCounts.set(id, (speakerCounts.get(id) || 0) + 1);
-    }
-  });
-  
-  let mostCommonSpeaker = bestSpeakerId;
-  let maxCount = 0;
-  speakerCounts.forEach((count, id) => {
-    if (count > maxCount) {
-      maxCount = count;
-      mostCommonSpeaker = id;
-    }
-  });
-  
-  // Calculate average confidence for recent frames
-  const recentConfidences = detector.confidenceHistory.slice(-MIN_CONSECUTIVE_FRAMES);
-  const avgConfidence = recentConfidences.length > 0
-    ? recentConfidences.reduce((a, b) => a + b, 0) / recentConfidences.length
-    : rawConfidence;
-
   // Decision logic for speaker assignment
   let isNew = false;
   let finalSpeakerId = bestSpeakerId;
@@ -323,11 +290,16 @@ export function detectSpeaker(
   if (bestSimilarity < SPEAKER_CHANGE_THRESHOLD) {
     // Low similarity to all existing speakers - potentially new speaker
     if (detector.speakerCount < detector.maxSpeakers) {
-      // Check if consistently different
-      const isConsistent = maxCount >= MIN_CONSECUTIVE_FRAMES;
-      const hasConfidence = avgConfidence >= MIN_CONFIDENCE_FOR_SWITCH;
+      // For new speaker detection, check if we've had consistently LOW similarity
+      // Look at recent history to see if we've been mismatching
+      const recentHistory = detector.speakerHistory.slice(-MIN_CONSECUTIVE_FRAMES);
+      const recentConfidences = detector.confidenceHistory.slice(-MIN_CONSECUTIVE_FRAMES);
       
-      if (isConsistent && hasConfidence) {
+      // Count how many recent frames had low similarity (indicating different speaker)
+      const lowSimilarityCount = recentConfidences.filter(c => c < SPEAKER_CHANGE_THRESHOLD).length;
+      
+      // If we've had consistently low similarity, create new speaker
+      if (lowSimilarityCount >= MIN_CONSECUTIVE_FRAMES || recentHistory.length < MIN_CONSECUTIVE_FRAMES) {
         // Create new speaker
         isNew = true;
         finalSpeakerId = detector.speakerCount;
@@ -341,6 +313,24 @@ export function detectSpeaker(
     }
   } else {
     // Good similarity to an existing speaker
+    // Use temporal smoothing to confirm the match
+    const recentSpeakers = detector.speakerHistory.slice(-MIN_CONSECUTIVE_FRAMES);
+    const speakerCounts = new Map<number, number>();
+    recentSpeakers.forEach(id => {
+      if (id >= 0) {
+        speakerCounts.set(id, (speakerCounts.get(id) || 0) + 1);
+      }
+    });
+    
+    let mostCommonSpeaker = bestSpeakerId;
+    let maxCount = 0;
+    speakerCounts.forEach((count, id) => {
+      if (count > maxCount) {
+        maxCount = count;
+        mostCommonSpeaker = id;
+      }
+    });
+    
     if (maxCount >= MIN_CONSECUTIVE_FRAMES) {
       // Consistently matching - use temporal smoothing result
       finalSpeakerId = mostCommonSpeaker;
@@ -348,13 +338,28 @@ export function detectSpeaker(
       // Not consistent yet - be cautious about switching
       if (detector.currentSpeakerId !== null && bestSpeakerId !== detector.currentSpeakerId) {
         // Only switch if we have strong evidence
-        const shouldSwitch = avgConfidence >= MIN_CONFIDENCE_FOR_SWITCH && separation > 0.1;
+        const shouldSwitch = rawConfidence >= MIN_CONFIDENCE_FOR_SWITCH && separation > 0.1;
         finalSpeakerId = shouldSwitch ? bestSpeakerId : detector.currentSpeakerId;
       } else {
         finalSpeakerId = bestSpeakerId;
       }
     }
   }
+
+  // Add to history AFTER decision (use the actual similarity, not boosted confidence)
+  detector.speakerHistory.push(finalSpeakerId);
+  detector.confidenceHistory.push(bestSimilarity);
+  
+  if (detector.speakerHistory.length > SPEAKER_HISTORY_SIZE) {
+    detector.speakerHistory.shift();
+    detector.confidenceHistory.shift();
+  }
+
+  // Calculate average confidence for reporting
+  const recentConfidences = detector.confidenceHistory.slice(-MIN_CONSECUTIVE_FRAMES);
+  const avgConfidence = recentConfidences.length > 0
+    ? recentConfidences.reduce((a, b) => a + b, 0) / recentConfidences.length
+    : bestSimilarity;
 
   return {
     speakerId: finalSpeakerId,
