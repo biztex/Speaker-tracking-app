@@ -54,7 +54,7 @@ export function calculateSpectralCentroid(
  */
 export function estimatePitch(dataArray: ArrayLike<number>, sampleRate: number): number {
   const minPeriod = Math.floor(sampleRate / 500); // Max 500 Hz
-  const maxPeriod = Math.floor(sampleRate / 50);  // Min 50 Hz
+  const maxPeriod = Math.floor(sampleRate / 40);  // Min 40 Hz (lower for weak voices)
   
   // Normalize the signal
   const normalized = new Float32Array(dataArray.length);
@@ -94,8 +94,8 @@ export function estimatePitch(dataArray: ArrayLike<number>, sampleRate: number):
     }
   }
 
-  // Require clear peak and good correlation strength
-  const hasGoodPeak = bestCorrelation > 0.35 && bestCorrelation > secondBestCorrelation * 1.3;
+  // Require clear peak and good correlation strength (lowered threshold for weak voices)
+  const hasGoodPeak = bestCorrelation > 0.25 && bestCorrelation > secondBestCorrelation * 1.2;
   
   if (hasGoodPeak && bestPeriod > 0) {
     // Parabolic interpolation for sub-sample accuracy
@@ -166,13 +166,13 @@ export function extractFormants(
     smoothed[i] = sum / count;
   }
   
-  // Formant ranges for human speech (more precise)
-  const f1Start = Math.floor(250 / binWidth);
-  const f1End = Math.floor(900 / binWidth);
-  const f2Start = Math.floor(850 / binWidth);
-  const f2End = Math.floor(2800 / binWidth);
-  const f3Start = Math.floor(2200 / binWidth);
-  const f3End = Math.floor(3500 / binWidth);
+  // Formant ranges for human speech (expanded for weak voices)
+  const f1Start = Math.floor(200 / binWidth);
+  const f1End = Math.floor(1000 / binWidth);
+  const f2Start = Math.floor(700 / binWidth);
+  const f2End = Math.floor(3000 / binWidth);
+  const f3Start = Math.floor(2000 / binWidth);
+  const f3End = Math.floor(3800 / binWidth);
   
   const f1 = findPeakInRange(smoothed, f1Start, f1End, binWidth);
   const f2 = findPeakInRange(smoothed, f2Start, f2End, binWidth);
@@ -300,7 +300,7 @@ let noiseFloor: NoiseFloor = {
 };
 
 const NOISE_ESTIMATION_SAMPLES = 15; // First 15 frames estimate noise (faster)
-const NOISE_MULTIPLIER = 1.8; // Noise threshold = noise floor * this (balanced)
+const NOISE_MULTIPLIER = 1.5; // Noise threshold = noise floor * this (lowered for weak voices)
 
 /**
  * Update noise floor estimation during quiet periods
@@ -333,6 +333,7 @@ const VAD_HISTORY_SIZE = 4; // Keep last 4 frames (reduced for faster response)
 /**
  * Enhanced Voice Activity Detection with improved multi-feature analysis
  * Uses adaptive thresholding and temporal smoothing
+ * Optimized to detect normal and weak voices
  */
 export function detectVoiceActivity(
   features: AudioFeatures,
@@ -343,39 +344,39 @@ export function detectVoiceActivity(
     updateNoiseFloor(features);
   }
 
-  // Adaptive threshold based on noise floor
+  // Adaptive threshold based on noise floor (lowered for weak voices)
   const volumeThreshold = Math.max(
-    silenceThreshold,
+    silenceThreshold * 0.7, // Lowered base threshold
     noiseFloor.volume * NOISE_MULTIPLIER
   );
   
   const hasVolume = features.volume > volumeThreshold;
   
-  // Voice characteristics with validated ranges
-  const hasValidPitch = features.pitch > 85 && features.pitch < 400;
-  const hasVoiceLikeZCR = features.zeroCrossingRate > 0.015 && features.zeroCrossingRate < 0.28;
-  const hasVoiceLikeSpectral = features.spectralCentroid > 250 && features.spectralCentroid < 2800;
+  // Voice characteristics with expanded ranges for weak/normal voices
+  const hasValidPitch = features.pitch > 70 && features.pitch < 450; // Expanded range
+  const hasVoiceLikeZCR = features.zeroCrossingRate > 0.01 && features.zeroCrossingRate < 0.35; // More permissive
+  const hasVoiceLikeSpectral = features.spectralCentroid > 200 && features.spectralCentroid < 3200; // Wider range
   
-  // Check formants - real speech has formants in expected ranges
+  // Check formants - real speech has formants in expected ranges (more permissive)
   const hasValidFormants = 
-    features.formants.f1 > 250 && features.formants.f1 < 950 &&
-    features.formants.f2 > 600 && features.formants.f2 < 2900;
+    features.formants.f1 > 200 && features.formants.f1 < 1000 &&
+    features.formants.f2 > 500 && features.formants.f2 < 3000;
   
   // Check MFCC energy distribution (voice has characteristic pattern)
   const mfccEnergy = features.mfcc.slice(0, 5).reduce((a, b) => a + b, 0) / 5;
-  const hasVoiceLikeMFCC = mfccEnergy > 0.1 && mfccEnergy < 0.9;
+  const hasVoiceLikeMFCC = mfccEnergy > 0.05 && mfccEnergy < 0.95; // More permissive
   
-  // Multi-feature scoring with weighted importance
+  // Multi-feature scoring with adjusted weights for weak voice detection
   let voiceScore = 0;
-  voiceScore += hasVolume ? 1.5 : 0;           // Volume is important
-  voiceScore += hasValidPitch ? 1.5 : 0;       // Pitch is very important
-  voiceScore += hasVoiceLikeZCR ? 0.5 : 0;     // ZCR is supplementary
-  voiceScore += hasVoiceLikeSpectral ? 1.0 : 0; // Spectral is important
-  voiceScore += hasValidFormants ? 1.5 : 0;    // Formants are very important
-  voiceScore += hasVoiceLikeMFCC ? 1.0 : 0;    // MFCC pattern is important
+  voiceScore += hasVolume ? 1.2 : 0;           // Reduced weight (weak voices may have lower volume)
+  voiceScore += hasValidPitch ? 1.8 : 0;       // Increased weight (pitch is most reliable)
+  voiceScore += hasVoiceLikeZCR ? 0.6 : 0;     // Slightly increased
+  voiceScore += hasVoiceLikeSpectral ? 1.2 : 0; // Increased weight
+  voiceScore += hasValidFormants ? 1.5 : 0;    // Formants remain important
+  voiceScore += hasVoiceLikeMFCC ? 1.2 : 0;    // Increased weight
   
-  // Need score >= 4.0 to consider it voice (balanced threshold)
-  const isVoice = voiceScore >= 4.0;
+  // Lowered threshold to 3.5 for better weak voice detection
+  const isVoice = voiceScore >= 3.5;
   
   // Temporal smoothing - require voice in majority of recent frames
   vadHistory.push(isVoice);
@@ -384,8 +385,8 @@ export function detectVoiceActivity(
   }
   
   const voiceCount = vadHistory.filter(v => v).length;
-  // Require 60% of recent frames to show voice activity
-  return voiceCount >= Math.ceil(VAD_HISTORY_SIZE * 0.6);
+  // Lowered to 50% for better weak voice detection
+  return voiceCount >= Math.ceil(VAD_HISTORY_SIZE * 0.5);
 }
 
 /**

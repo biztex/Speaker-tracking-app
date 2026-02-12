@@ -74,10 +74,10 @@ function calculateFormantSimilarity(
     return 0.5; // Neutral similarity if formants are invalid
   }
   
-  // Normalize formants to similar scales
-  const f1Diff = Math.abs(formants1.f1 - formants2.f1) / 500; // Normalize by typical range
-  const f2Diff = Math.abs(formants1.f2 - formants2.f2) / 1500;
-  const f3Diff = Math.abs(formants1.f3 - formants2.f3) / 1000;
+  // Normalize formants to similar scales (more permissive for weak voices)
+  const f1Diff = Math.abs(formants1.f1 - formants2.f1) / 600; // More permissive
+  const f2Diff = Math.abs(formants1.f2 - formants2.f2) / 1800; // More permissive
+  const f3Diff = Math.abs(formants1.f3 - formants2.f3) / 1200; // More permissive
   
   const avgDiff = (f1Diff + f2Diff + f3Diff) / 3;
   return Math.max(0, 1 - avgDiff);
@@ -96,15 +96,15 @@ export function calculateSimilarity(
     return 0.5; // Not enough data to make a determination
   }
 
-  // 1. Pitch similarity with adaptive tolerance
+  // 1. Pitch similarity with adaptive tolerance (more permissive for weak voices)
   const pitchDiff = Math.abs(features.pitch - profile.avgPitch);
   const pitchStdDev = Math.sqrt(profile.pitchVariance);
-  const pitchTolerance = Math.max(40, pitchStdDev * 1.5); // Tighter tolerance
+  const pitchTolerance = Math.max(50, pitchStdDev * 2.0); // More permissive tolerance
   const pitchSimilarity = Math.max(0, 1 - pitchDiff / pitchTolerance);
 
-  // 2. Spectral centroid similarity (voice brightness)
+  // 2. Spectral centroid similarity (voice brightness) - more permissive
   const spectralDiff = Math.abs(features.spectralCentroid - profile.avgSpectralCentroid);
-  const spectralSimilarity = Math.max(0, 1 - spectralDiff / 600); // Tighter tolerance
+  const spectralSimilarity = Math.max(0, 1 - spectralDiff / 800); // More permissive tolerance
 
   // 3. MFCC similarity using cosine similarity (most discriminative)
   const mfccVec1 = features.mfcc.slice(0, MFCC_COEFFICIENTS);
@@ -161,11 +161,11 @@ export function updateProfile(
     val * (1 - alpha) + (mfccToUse[i] || 0) * alpha
   );
   
-  // Update formants with validation
+  // Update formants with validation (expanded ranges for weak voices)
   const currentFormants = profile.avgFormants || features.formants;
   const hasValidNewFormants = 
-    features.formants.f1 > 200 && features.formants.f1 < 1000 &&
-    features.formants.f2 > 500 && features.formants.f2 < 3000;
+    features.formants.f1 > 180 && features.formants.f1 < 1100 &&
+    features.formants.f2 > 450 && features.formants.f2 < 3200;
   
   const newFormants = hasValidNewFormants ? {
     f1: currentFormants.f1 * (1 - alpha) + features.formants.f1 * alpha,
@@ -232,8 +232,8 @@ export function detectSpeaker(
     };
   }
 
-  // Validate pitch quality - if poor, maintain current speaker
-  const hasPitch = features.pitch > 80 && features.pitch < 400;
+  // Validate pitch quality - if poor, maintain current speaker (expanded range for weak voices)
+  const hasPitch = features.pitch > 70 && features.pitch < 450;
   if (!hasPitch && detector.currentSpeakerId !== null) {
     detector.speakerHistory.push(detector.currentSpeakerId);
     detector.confidenceHistory.push(0.4);
